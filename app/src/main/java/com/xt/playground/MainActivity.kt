@@ -1,10 +1,17 @@
 package com.xt.playground
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.PorterDuff
+import android.net.Uri
 import android.support.v7.app.AppCompatActivity
 import android.os.Bundle
+import android.support.v4.app.ActivityCompat
+import android.support.v4.content.ContextCompat
 import android.support.v7.app.AlertDialog
+import android.util.Base64
 import android.view.Gravity
 import android.view.View
 import android.view.inputmethod.EditorInfo
@@ -14,6 +21,12 @@ import com.opensource.xt.core.XTContext
 import com.opensource.xt.core.XTDebug
 import com.opensource.xt.foundation.XTFoundationContext
 import com.opensource.xt.uikit.XTUIContext
+import okhttp3.*
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.IOException
+import java.util.*
+import java.util.zip.Inflater
 
 class MainActivity : AppCompatActivity() {
 
@@ -37,6 +50,9 @@ class MainActivity : AppCompatActivity() {
                             }
                             1 -> {
                                 onDebug()
+                            }
+                            2 -> {
+                                startScanner()
                             }
                         }
                     })
@@ -81,6 +97,118 @@ class MainActivity : AppCompatActivity() {
         XTUIContext.currentDebugApplicationContext = this
         XTDebug.sharedDebugger.delegate = XTUIContext
         XTDebug.debugWithIP(IP, port, this)
+    }
+
+    fun startScanner() {
+        setupQRCodeHandler()
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.CAMERA)) {
+                startScanner()
+            } else {
+                ActivityCompat.requestPermissions(this, listOf(Manifest.permission.CAMERA).toTypedArray(), 1)
+            }
+        }
+        else {
+            startActivity(Intent(this, CodeScanActivity::class.java))
+        }
+    }
+
+    fun setupQRCodeHandler() {
+        onQRCode = {
+            try {
+                val uri = Uri.parse(it)
+                if (uri.query.startsWith("ws://")) {
+                    var found = false
+                    uri.query.split("|||")
+                            .filter { it.isNotEmpty() && it.startsWith("ws://") }
+                            .forEach { wsServer ->
+                                val wsHostname = wsServer.substring(5).split(":").first()
+                                val wsPort = wsServer.substring(5).split(":").last().toInt()
+                                val req = Request.Builder()
+                                            .url("http://" + wsHostname + ":" + (wsPort + 1) + "/status")
+                                            .get()
+                                            .build()
+                                OkHttpClient().newCall(req).enqueue(object : Callback {
+                                    override fun onFailure(call: Call?, e: IOException?) {}
+                                    override fun onResponse(call: Call?, response: Response?) {
+                                        if (found) { return }
+                                        if (response?.body()?.string() == "continue") {
+                                            found = true
+                                            this@MainActivity.runOnUiThread {
+                                                this@MainActivity.startDebugWithAddress("$wsHostname:$wsPort")
+                                            }
+                                        }
+                                    }
+                                })
+                            }
+                }
+                else if (uri.query.startsWith("eval=")) {
+                    val base64Encoded = uri.query.substring(5).split('&').first()
+                    val code = String(this.inflate(Base64.decode(base64Encoded, 0))!!)
+                    val tmpFile = File.createTempFile("tmp_", "js")
+                    tmpFile.writeText(code)
+                    this@MainActivity.runOnUiThread {
+                        XTUIContext.createWithSourceURL(this@MainActivity, Uri.fromFile(tmpFile).toString(), {
+                            it.start()
+                        }, {
+                            kotlin.io.println(true)
+                        })
+                    }
+                }
+                else if (uri.query.startsWith("url=")) {
+                    val req = Request.Builder().url(String(Base64.decode(uri.query.substring(4).split("&").first(), 0))).get().build()
+                    OkHttpClient().newCall(req).enqueue(object : Callback {
+                        override fun onFailure(call: Call?, e: IOException?) {}
+                        override fun onResponse(call: Call?, response: Response?) {
+                            response?.body()?.string()?.let { code ->
+                                val tmpFile = File.createTempFile("tmp_", "js")
+                                tmpFile.writeText(code)
+                                this@MainActivity.runOnUiThread {
+                                    XTUIContext.createWithSourceURL(this@MainActivity, Uri.fromFile(tmpFile).toString(), {
+                                        it.start()
+                                    }, {
+                                        kotlin.io.println(true)
+                                    })
+                                }
+                            }
+                        }
+                    })
+                }
+            } catch (e: Exception) {}
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 1 && grantResults.firstOrNull() === PackageManager.PERMISSION_GRANTED) {
+            startActivity(Intent(this, CodeScanActivity::class.java))
+        }
+    }
+
+    private fun inflate(byteArray: ByteArray): ByteArray? {
+        try {
+            val inflater = Inflater()
+            inflater.setInput(byteArray, 0, byteArray.size)
+            val inflatedBytes = ByteArray(2048)
+            val inflatedOutputStream = ByteArrayOutputStream()
+            while (true) {
+                val count = inflater.inflate(inflatedBytes, 0, 2048)
+                if (count <= 0) {
+                    break
+                }
+                else {
+                    inflatedOutputStream.write(inflatedBytes, 0, count)
+                }
+            }
+            return inflatedOutputStream.toByteArray()
+        } catch (e: Exception) { e.printStackTrace(); }
+        return null
+    }
+
+    companion object {
+
+        var onQRCode: ((code: String) -> Unit)? = null
+
     }
 
 }

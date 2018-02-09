@@ -30,6 +30,7 @@ dependencies {
     compile 'com.github.XTStudio.XT:core:0.0.1'
     compile 'com.github.XTStudio.XT:foundation:0.0.1'
     compile 'com.github.XTStudio.XT:uikit:0.0.1'
+    compile 'com.dlazaro66.qrcodereaderview:qrcodereaderview:2.0.2'
     testImplementation 'junit:junit:4.12'
     androidTestImplementation 'com.android.support.test:runner:1.0.1'
     androidTestImplementation 'com.android.support.test.espresso:espresso-core:3.0.1'
